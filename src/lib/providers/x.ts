@@ -57,6 +57,9 @@ export const x: OAuthProvider = {
   maxLength: 280,
   maxImages: 4,
   supportsMetrics: true,
+  // X's automation rules forbid duplicate posts and bulk posting; it also rejects exact repeats
+  pace: { minMinutesBetween: 5, maxPerDay: 50 },
+  duplicateWindowDays: 30,
 
   isConfigured: () => Boolean(process.env.X_CLIENT_ID && process.env.X_CLIENT_SECRET),
 

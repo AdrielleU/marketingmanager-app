@@ -2,11 +2,14 @@ import Link from 'next/link';
 import { logout } from '@/actions/auth';
 import { switchOrganization } from '@/actions/team';
 import { requireOrg } from '@/lib/auth';
+import { db } from '@/lib/db';
 import { NavLink } from '@/components/nav-link';
 
 const NAV = [
   { href: '/calendar', label: 'Calendar' },
   { href: '/posts', label: 'Posts' },
+  { href: '/inbox', label: 'Inbox' },
+  { href: '/ready', label: 'Ready to post' },
   { href: '/analytics', label: 'Analytics' },
   { href: '/channels', label: 'Channels' },
   { href: '/team', label: 'Team' },
@@ -14,6 +17,11 @@ const NAV = [
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, org, orgs } = await requireOrg();
+  const [unread, ready] = await Promise.all([
+    db.inboxItem.count({ where: { orgId: org.id, status: 'UNREAD' } }),
+    db.postTarget.count({ where: { status: 'READY', post: { orgId: org.id } } }),
+  ]);
+  const badges: Record<string, number> = { '/inbox': unread, '/ready': ready };
 
   return (
     <div className="flex min-h-screen">
@@ -39,7 +47,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => (
-            <NavLink key={item.href} href={item.href}>{item.label}</NavLink>
+            <NavLink key={item.href} href={item.href}>
+              {item.label}
+              {(badges[item.href] ?? 0) > 0 && (
+                <span className="ml-2 rounded-full bg-brand-600 px-1.5 py-0.5 text-xs font-medium text-white">
+                  {badges[item.href] > 99 ? '99+' : badges[item.href]}
+                </span>
+              )}
+            </NavLink>
           ))}
         </nav>
 

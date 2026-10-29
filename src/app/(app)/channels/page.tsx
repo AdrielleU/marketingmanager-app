@@ -1,4 +1,4 @@
-import { connectWithCredentials, disconnectChannel } from '@/actions/channels';
+import { connectManual, connectWithCredentials, disconnectChannel } from '@/actions/channels';
 import { ActionForm, SubmitButton } from '@/components/form';
 import { ProviderIcon } from '@/components/provider-icon';
 import { hasRole, requireOrg } from '@/lib/auth';
@@ -66,6 +66,19 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
                       Add {p.id.toUpperCase()}_CLIENT_ID and {p.id.toUpperCase()}_CLIENT_SECRET to .env to enable.
                     </p>
                   )
+                ) : p.connectType === 'manual' ? (
+                  <ActionForm action={connectManual} className="space-y-3" resetOnSuccess>
+                    <input type="hidden" name="provider" value={p.id} />
+                    <div>
+                      <label className="label" htmlFor={`${p.id}-handle`}>{p.accountLabel}</label>
+                      <input className="input" id={`${p.id}-handle`} name="handle" placeholder={p.accountPlaceholder} autoComplete="off" required />
+                      <p className="mt-1 text-xs text-slate-500">
+                        You post by hand: when a post is due it appears in Ready to post with the text and images ready.
+                        Nothing connects to {p.name}.
+                      </p>
+                    </div>
+                    <SubmitButton className="btn-primary w-full">Add {p.name}</SubmitButton>
+                  </ActionForm>
                 ) : (
                   <ActionForm action={connectWithCredentials} className="space-y-3" resetOnSuccess>
                     <input type="hidden" name="provider" value={p.id} />
@@ -87,8 +100,19 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
                     <SubmitButton className="btn-primary w-full">Connect {p.name}</SubmitButton>
                   </ActionForm>
                 )}
-                {!p.supportsMetrics && (
-                  <p className="mt-3 text-xs text-slate-400">Analytics aren&apos;t available for {p.name} personal profiles.</p>
+                {!p.publish && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    Inbox only: comments, keyword matches and replies. Posting to {p.name} isn&apos;t supported yet.
+                  </p>
+                )}
+                {p.pace && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    Posts are spaced at least {p.pace.minMinutesBetween} minutes apart, up to {p.pace.maxPerDay} a day
+                    per account.
+                  </p>
+                )}
+                {!p.supportsMetrics && p.connectType !== 'manual' && (
+                  <p className="mt-3 text-xs text-slate-400">{p.name} doesn&apos;t report post analytics.</p>
                 )}
               </div>
             ))}

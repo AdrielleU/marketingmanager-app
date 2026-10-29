@@ -1,9 +1,11 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import bcrypt from 'bcryptjs';
 import type { Role } from '@prisma/client';
 import { db } from './db';
 import { randomToken, sha256 } from './crypto';
+import { checkEligibility } from './eligibility';
 
 const SESSION_COOKIE = 'mm_session';
 const ORG_COOKIE = 'mm_org';
@@ -38,7 +40,8 @@ export async function destroySession() {
   store.delete(ORG_COOKIE);
 }
 
-export async function getCurrentUser() {
+// cache(): layouts and pages each ask for the user, so look it up (and run the ban check) once per request.
+export const getCurrentUser = cache(async () => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const session = await db.session.findUnique({
@@ -46,8 +49,13 @@ export async function getCurrentUser() {
     select: { expiresAt: true, user: { select: { id: true, email: true, name: true } } },
   });
   if (!session || session.expiresAt < new Date()) return null;
+  if (!(await checkEligibility(session.user.email, 'session')).ok) {
+    // Banned while signed in: end all their sessions so the ban applies now (and is logged once).
+    await db.session.deleteMany({ where: { userId: session.user.id } });
+    return null;
+  }
   return session.user;
-}
+});
 
 export async function requireUser() {
   const user = await getCurrentUser();

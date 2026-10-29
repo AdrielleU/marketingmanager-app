@@ -1,5 +1,5 @@
 import { AtpAgent, RichText } from '@atproto/api';
-import type { ChannelCredentials, CredentialsProvider, Metrics } from './types';
+import type { ChannelCredentials, CredentialsProvider, InboxEntry, Metrics } from './types';
 import { ReconnectRequiredError } from './types';
 
 const SERVICE = 'https://bsky.social';
@@ -33,6 +33,11 @@ function postUrl(handle: string, uri: string) {
   const rkey = uri.split('/').pop();
   return `https://bsky.app/profile/${handle}/post/${rkey}`;
 }
+
+// Notifications are newest first; a few pages covers a sync interval of minutes with room to spare
+const INBOX_PAGES = 4;
+
+type PostRecord = { text?: string; createdAt?: string; reply?: { root: { uri: string; cid: string }; parent?: { uri: string } } };
 
 export const bluesky: CredentialsProvider = {
   id: 'bluesky',
@@ -108,5 +113,70 @@ export const bluesky: CredentialsProvider = {
       }
     }
     return result;
+  },
+
+  async fetchInbox(creds, since) {
+    const agent = await agentFor(creds);
+    const entries: InboxEntry[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < INBOX_PAGES; page++) {
+      const { data } = await agent.listNotifications({ reasons: ['reply', 'mention', 'quote'], limit: 50, cursor });
+      for (const n of data.notifications) {
+        if (new Date(n.indexedAt) < since) return entries;
+        const record = n.record as PostRecord;
+        entries.push({
+          kind: n.reason === 'reply' ? 'reply' : 'mention',
+          externalId: n.uri,
+          url: postUrl(n.author.handle, n.uri),
+          authorName: n.author.displayName || n.author.handle,
+          authorHandle: n.author.handle,
+          text: record.text ?? '',
+          postedAt: new Date(record.createdAt ?? n.indexedAt),
+          inReplyTo: record.reply?.parent?.uri ?? null,
+        });
+      }
+      if (!data.cursor) break;
+      cursor = data.cursor;
+    }
+    return entries;
+  },
+
+  async searchPosts(creds, keyword, since) {
+    const agent = await agentFor(creds);
+    const { data } = await agent.app.bsky.feed.searchPosts({ q: keyword, sort: 'latest', since: since.toISOString(), limit: 50 });
+    return data.posts
+      .filter((p) => p.author.did !== creds.externalId)
+      .map((p) => {
+        const record = p.record as PostRecord;
+        return {
+          kind: 'keyword' as const,
+          externalId: p.uri,
+          url: postUrl(p.author.handle, p.uri),
+          authorName: p.author.displayName || p.author.handle,
+          authorHandle: p.author.handle,
+          text: record.text ?? '',
+          postedAt: new Date(record.createdAt ?? p.indexedAt),
+        };
+      });
+  },
+
+  async reply(creds, externalId, text) {
+    const agent = await agentFor(creds);
+    const { data } = await agent.getPosts({ uris: [externalId] });
+    const parent = data.posts[0];
+    if (!parent) throw new Error('The post you are replying to no longer exists');
+
+    // A reply points at its direct parent and at the thread's first post
+    const parentRef = { uri: parent.uri, cid: parent.cid };
+    const root = (parent.record as PostRecord).reply?.root ?? parentRef;
+    const rt = new RichText({ text });
+    await rt.detectFacets(agent);
+    const res = await agent.post({
+      text: rt.text,
+      facets: rt.facets,
+      createdAt: new Date().toISOString(),
+      reply: { root, parent: parentRef },
+    });
+    return { externalId: res.uri, url: postUrl(agent.session?.handle ?? creds.handle, res.uri) };
   },
 };

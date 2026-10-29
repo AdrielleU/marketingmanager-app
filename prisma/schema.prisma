@@ -16,6 +16,7 @@ model User {
   sessions     Session[]
   memberships  Membership[]
   posts        Post[]
+  inboxReplies InboxItem[]
 }
 
 // Session tokens are random; only their SHA-256 hash is stored.
@@ -30,14 +31,19 @@ model Session {
 }
 
 model Organization {
-  id          String       @id @default(cuid())
-  name        String
-  createdAt   DateTime     @default(now())
-  memberships Membership[]
-  invites     Invite[]
-  channels    Channel[]
-  posts       Post[]
-  media       Media[]
+  id              String       @id @default(cuid())
+  name            String
+  // Product facts, tone and links given to Claude when it drafts inbox replies
+  replyGuidelines String?
+  createdAt       DateTime     @default(now())
+  memberships     Membership[]
+  invites         Invite[]
+  channels        Channel[]
+  posts           Post[]
+  media           Media[]
+  watches         Watch[]
+  feeds           Feed[]
+  inboxItems      InboxItem[]
 }
 
 enum Role {
@@ -73,7 +79,7 @@ model Invite {
 model Channel {
   id             String       @id @default(cuid())
   orgId          String
-  provider       String // "bluesky" | "x" | "linkedin"
+  provider       String // ProviderId in src/lib/providers/types.ts
   externalId     String
   name           String
   handle         String
@@ -85,6 +91,7 @@ model Channel {
   createdAt      DateTime     @default(now())
   org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   targets        PostTarget[]
+  inboxItems     InboxItem[]
 
   @@unique([orgId, provider, externalId])
 }
@@ -118,25 +125,31 @@ model Post {
 
 enum TargetStatus {
   PENDING
+  READY // manual channel: due, waiting for a person to post it by hand
   PUBLISHED
   FAILED
 }
 
 // One row per (post, channel) so each channel publishes and reports independently.
 model PostTarget {
-  id          String           @id @default(cuid())
-  postId      String
-  channelId   String
-  status      TargetStatus     @default(PENDING)
-  externalId  String?
-  externalUrl String?
-  error       String?
-  publishedAt DateTime?
-  post        Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
-  channel     Channel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  metrics     MetricSnapshot[]
+  id           String           @id @default(cuid())
+  postId       String
+  channelId    String
+  status       TargetStatus     @default(PENDING)
+  externalId   String?
+  externalUrl  String?
+  error        String?
+  options      Json? // values for the provider's postFields, e.g. Reddit subreddit + title
+  publishAfter DateTime? // slot reserved at dispatch so the channel's pace limits hold
+  readyAt      DateTime? // when a manual target moved to READY
+  publishedAt  DateTime?
+  post         Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  channel      Channel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  metrics      MetricSnapshot[]
+  inboxItems   InboxItem[]
 
   @@unique([postId, channelId])
+  @@index([channelId, publishAfter])
 }
 
 model Media {
@@ -171,4 +184,118 @@ model MetricSnapshot {
   target      PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([targetId, capturedAt])
+}
+
+enum RestrictionKind {
+  EMAIL
+  DOMAIN
+}
+
+// App-wide block list (spam, abuse). Values are stored lowercased; a DOMAIN also covers its subdomains.
+model Restriction {
+  id        String          @id @default(cuid())
+  kind      RestrictionKind
+  value     String
+  reason    String?
+  createdAt DateTime        @default(now())
+
+  @@unique([kind, value])
+}
+
+// Keywords an org wants to hear about; every sync searches each channel type that supports search.
+model Watch {
+  id        String       @id @default(cuid())
+  orgId     String
+  keyword   String
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  items     InboxItem[]
+
+  @@unique([orgId, keyword])
+}
+
+// A listen-only feed polled into the inbox, e.g. one Google Alerts RSS feed (src/lib/sources).
+model Feed {
+  id        String       @id @default(cuid())
+  orgId     String
+  sourceId  String // SourceId in src/lib/sources/types.ts
+  label     String
+  url       String // feed link, or imaps://user@host/folder for a mailbox
+  secret    String? // encrypted (mailbox app password)
+  state     Json? // the source's sync cursor, e.g. the last IMAP UID read
+  error     String? // last sync failure, shown on the Inbox page
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  items     InboxItem[]
+
+  @@unique([orgId, url])
+}
+
+enum InboxKind {
+  REPLY // someone replied to the connected account
+  MENTION // someone @mentioned the connected account
+  KEYWORD // a public post matched a Watch keyword
+}
+
+enum InboxStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+enum DraftStatus {
+  REQUESTED // waiting for the worker to ask Claude
+  DRAFTING
+  READY
+  FAILED
+}
+
+enum ReplyStatus {
+  PENDING // written in the app, waiting for the worker
+  SENDING
+  SENT
+  FAILED
+}
+
+// A reply, mention or keyword match pulled in by the worker, plus our reply to it (if any).
+model InboxItem {
+  id           String       @id @default(cuid())
+  orgId        String
+  channelId    String? // the connected account it arrived through, and the one we reply as
+  feedId       String? // or the listen-only feed (Google Alerts…) it came from
+  provider     String // ProviderId or SourceId
+  kind         InboxKind
+  externalId   String // the platform's id for the reply/post, used to reply to it
+  url          String
+  authorName   String
+  authorHandle String
+  text         String
+  postedAt     DateTime
+  status       InboxStatus  @default(UNREAD)
+  targetId     String? // our post this replies to, when it was published from this app
+  watchId      String? // the keyword that matched
+  threadKey    String? // groups notifications about the same thread (e.g. one Reddit post)
+  draft        String? // suggested reply from Claude, for a person to edit and send
+  draftStatus  DraftStatus?
+  draftError   String?
+  replyText    String?
+  replyStatus  ReplyStatus?
+  replyUrl     String?
+  replyError   String?
+  repliedById  String?
+  repliedAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  channel      Channel?     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  feed         Feed?        @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  target       PostTarget?  @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  watch        Watch?       @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  repliedBy    User?        @relation(fields: [repliedById], references: [id], onDelete: SetNull)
+
+  // The same post can be found twice (as a reply and a keyword match, or on every sync); keep one
+  @@unique([orgId, provider, externalId])
+  @@index([orgId, status, postedAt])
+  @@index([replyStatus])
+  @@index([draftStatus])
 }

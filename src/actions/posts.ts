@@ -5,8 +5,10 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { requireOrg } from '@/lib/auth';
-import { getProvider } from '@/lib/providers';
-import { refreshMetrics } from '@/lib/publishing';
+import type { FormState } from './auth';
+import { duplicateWarnings } from '@/lib/duplicates';
+import { canSchedule, getProvider } from '@/lib/providers';
+import { finalizePost, refreshMetrics } from '@/lib/publishing';
 
 const EDITABLE = ['DRAFT', 'SCHEDULED', 'FAILED'] as const;
 
@@ -15,12 +17,17 @@ const savePostSchema = z.object({
   content: z.string().trim().min(1, 'Write something first').max(10_000),
   channelIds: z.array(z.string()).max(20),
   mediaIds: z.array(z.string()).max(9),
+  // Per-channel values for the provider's postFields, keyed by channel id
+  options: z.record(z.string(), z.record(z.string(), z.string().trim().max(1000))).default({}),
   intent: z.enum(['draft', 'schedule', 'now']),
+  // Set after the user has seen and accepted the duplicate warnings
+  ignoreWarnings: z.boolean().default(false),
   scheduledAt: z.string().datetime().nullable(),
 });
 
 export type SavePostInput = z.infer<typeof savePostSchema>;
-export type SavePostResult = { ok: true; id: string } | { ok: false; error: string };
+// `confirm`: the error is a warning the user may accept by resubmitting with ignoreWarnings
+export type SavePostResult = { ok: true; id: string } | { ok: false; error: string; confirm?: boolean };
 
 export async function savePost(input: SavePostInput): Promise<SavePostResult> {
   const { org, user } = await requireOrg();
@@ -45,12 +52,29 @@ export async function savePost(input: SavePostInput): Promise<SavePostResult> {
 
     for (const channel of channels) {
       const provider = getProvider(channel.provider);
+      if (!canSchedule(provider)) return { ok: false, error: `${provider.name} channels can't be posted to from the app` };
       if (data.content.length > provider.maxLength) {
         return { ok: false, error: `${provider.name} allows ${provider.maxLength} characters` };
       }
-      if (media.length > provider.maxImages) {
-        return { ok: false, error: `${provider.name} allows ${provider.maxImages} images` };
+      if (provider.minImages && media.length < provider.minImages) {
+        return { ok: false, error: `${provider.name} posts need at least ${provider.minImages} image${provider.minImages > 1 ? 's' : ''}` };
       }
+      if (media.length > provider.maxImages) {
+        const limit = provider.maxImages === 0 ? "doesn't support images" : `allows ${provider.maxImages} images`;
+        return { ok: false, error: `${provider.name} ${limit}` };
+      }
+      for (const field of provider.postFields ?? []) {
+        const value = data.options[channel.id]?.[field.name] ?? '';
+        if (field.required && !value) return { ok: false, error: `${channel.name}: ${field.label} is required` };
+        if (value.length > field.maxLength) {
+          return { ok: false, error: `${channel.name}: ${field.label} allows ${field.maxLength} characters` };
+        }
+      }
+    }
+
+    if (!data.ignoreWarnings) {
+      const warnings = await duplicateWarnings(org.id, data.id, data.content, channels);
+      if (warnings.length) return { ok: false, error: warnings.join(' '), confirm: true };
     }
 
     if (data.intent === 'now') scheduledAt = new Date();
@@ -69,7 +93,7 @@ export async function savePost(input: SavePostInput): Promise<SavePostResult> {
     scheduledAt,
   };
   const relations = {
-    targets: { create: channels.map((c) => ({ channelId: c.id })) },
+    targets: { create: channels.map((c) => ({ channelId: c.id, options: pickOptions(c.provider, data.options[c.id]) })) },
     media: { create: media.map((m, position) => ({ mediaId: m.id, position })) },
   };
 
@@ -101,6 +125,13 @@ export async function savePost(input: SavePostInput): Promise<SavePostResult> {
   return { ok: true, id: id! };
 }
 
+/** Keeps only the fields the provider declares, so the client can't stash arbitrary data on a target. */
+function pickOptions(providerId: string, values: Record<string, string> = {}) {
+  const fields = getProvider(providerId).postFields ?? [];
+  if (fields.length === 0) return undefined;
+  return Object.fromEntries(fields.map((f) => [f.name, values[f.name] ?? '']));
+}
+
 export async function deletePost(form: FormData) {
   const { org } = await requireOrg();
   await db.post.deleteMany({
@@ -130,4 +161,48 @@ export async function refreshAnalytics() {
   const { org } = await requireOrg();
   await refreshMetrics(org.id);
   revalidatePath('/analytics');
+}
+
+const postedSchema = z.object({
+  targetId: z.string(),
+  // Optional link to the live post, so the post page and inbox can point at it
+  url: z.union([z.literal(''), z.string().trim().url('Paste the full link to the post').max(1000)]),
+});
+
+/** A person posted a manual channel's copy by hand. */
+export async function markPosted(_: FormState, form: FormData): Promise<FormState> {
+  const { org } = await requireOrg();
+  const parsed = postedSchema.safeParse({ targetId: form.get('targetId'), url: form.get('url') ?? '' });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (parsed.data.url && !/^https?:\/\//i.test(parsed.data.url)) return { error: 'Paste the full link to the post' };
+
+  const target = await db.postTarget.findFirst({
+    where: { id: parsed.data.targetId, status: 'READY', post: { orgId: org.id } },
+    select: { id: true, postId: true },
+  });
+  if (!target) return { error: 'This was already handled' };
+  await db.postTarget.update({
+    where: { id: target.id },
+    data: { status: 'PUBLISHED', publishedAt: new Date(), externalUrl: parsed.data.url || null, error: null },
+  });
+  await finalizePost(target.postId);
+  revalidatePath('/ready');
+  revalidatePath('/posts');
+  revalidatePath('/calendar');
+  return {};
+}
+
+/** Not posting this one after all; it counts as failed so "Retry failed channels" can bring it back. */
+export async function skipManualTarget(form: FormData) {
+  const { org } = await requireOrg();
+  const target = await db.postTarget.findFirst({
+    where: { id: String(form.get('targetId')), status: 'READY', post: { orgId: org.id } },
+    select: { id: true, postId: true },
+  });
+  if (!target) return;
+  await db.postTarget.update({ where: { id: target.id }, data: { status: 'FAILED', error: 'Skipped: not posted by hand' } });
+  await finalizePost(target.postId);
+  revalidatePath('/ready');
+  revalidatePath('/posts');
+  revalidatePath('/calendar');
 }

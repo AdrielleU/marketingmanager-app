@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { requireOrg } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { providers } from '@/lib/providers';
+import { canSchedule, providers } from '@/lib/providers';
 import { Composer, type ComposerChannel, type ComposerPost } from './composer';
 
 export default async function ComposePage({ searchParams }: { searchParams: Promise<{ id?: string; date?: string }> }) {
@@ -13,9 +13,13 @@ export default async function ComposePage({ searchParams }: { searchParams: Prom
     select: { id: true, provider: true, name: true, handle: true, needsReconnect: true },
     orderBy: { createdAt: 'asc' },
   });
-  const composerChannels: ComposerChannel[] = channels.map((c) => {
+  // Inbox-only channels (YouTube for now) can't be posted to; manual ones are posted by hand
+  const composerChannels: ComposerChannel[] = channels.filter((c) => {
     const p = providers[c.provider as keyof typeof providers];
-    return { ...c, maxLength: p.maxLength, maxImages: p.maxImages, providerName: p.name };
+    return p && canSchedule(p);
+  }).map((c) => {
+    const p = providers[c.provider as keyof typeof providers];
+    return { ...c, maxLength: p.maxLength, maxImages: p.maxImages, minImages: p.minImages ?? 0, manual: p.connectType === 'manual', providerName: p.name, postFields: p.postFields ?? [] };
   });
 
   let post: ComposerPost | null = null;
@@ -27,7 +31,7 @@ export default async function ComposePage({ searchParams }: { searchParams: Prom
         content: true,
         status: true,
         scheduledAt: true,
-        targets: { select: { channelId: true, status: true, externalUrl: true, error: true } },
+        targets: { select: { channelId: true, status: true, externalUrl: true, error: true, options: true, publishAfter: true } },
         media: { select: { media: { select: { id: true, fileName: true } } }, orderBy: { position: 'asc' } },
       },
     });
@@ -37,7 +41,11 @@ export default async function ComposePage({ searchParams }: { searchParams: Prom
       content: found.content,
       status: found.status,
       scheduledAt: found.scheduledAt?.toISOString() ?? null,
-      targets: found.targets,
+      targets: found.targets.map((t) => ({
+        ...t,
+        options: (t.options ?? {}) as Record<string, string>,
+        publishAfter: t.publishAfter?.toISOString() ?? null,
+      })),
       media: found.media.map(({ media }) => ({ id: media.id, url: `/media/${org.id}/${media.fileName}` })),
     };
   }

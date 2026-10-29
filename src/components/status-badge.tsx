@@ -6,6 +6,7 @@ const STYLES: Record<string, string> = {
   PARTIAL: 'bg-orange-50 text-orange-700',
   FAILED: 'bg-red-50 text-red-700',
   PENDING: 'bg-slate-100 text-slate-700',
+  READY: 'bg-violet-50 text-violet-700',
 };
 
 export function StatusBadge({ status }: { status: string }) {

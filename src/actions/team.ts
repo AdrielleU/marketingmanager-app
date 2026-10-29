@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { requireOrg, requireUser, setCurrentOrg } from '@/lib/auth';
 import { randomToken } from '@/lib/crypto';
+import { checkEligibility, INELIGIBLE_MESSAGE } from '@/lib/eligibility';
 import type { FormState } from './auth';
 
 const INVITE_DAYS = 7;
@@ -44,11 +45,8 @@ export async function createInvite(_: FormState, form: FormData): Promise<FormSt
   const parsed = inviteSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const existing = await db.membership.findFirst({
-    where: { orgId: org.id, user: { email: parsed.data.email } },
-    select: { userId: true },
-  });
-  if (existing) return { error: 'That person is already a member' };
+  const eligibility = await checkEligibility(parsed.data.email, 'invite', org.id);
+  if (!eligibility.ok) return { error: INELIGIBLE_MESSAGE.invite };
 
   await db.invite.create({
     data: {
@@ -108,6 +106,7 @@ export async function acceptInvite(form: FormData) {
   const invite = await db.invite.findUnique({ where: { token } });
   if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) throw new Error('This invite is no longer valid');
   if (invite.email !== user.email.toLowerCase()) throw new Error(`This invite was sent to ${invite.email}`);
+  if (!(await checkEligibility(user.email, 'accept-invite')).ok) throw new Error(INELIGIBLE_MESSAGE['accept-invite']);
 
   await db.$transaction([
     db.membership.upsert({

@@ -2,8 +2,9 @@ import type PgBoss from 'pg-boss';
 import { db } from './db';
 import { getFreshCredentials, markNeedsReconnect } from './channels';
 import { getProvider } from './providers';
-import { ReconnectRequiredError } from './providers/types';
+import { ReconnectRequiredError, type PostOptions } from './providers/types';
 import { createLogger } from './logger';
+import { reserveSlot } from './pacing';
 import { readUpload } from './storage';
 
 const log = createLogger('publishing');
@@ -38,17 +39,31 @@ export async function dispatchDuePosts(boss: PgBoss) {
 
     const targets = await db.postTarget.findMany({
       where: { postId: id, status: 'PENDING' },
-      select: { id: true },
+      select: { id: true, channelId: true, channel: { select: { provider: true } } },
     });
+    let delayed = 0;
+    let manual = 0;
     for (const target of targets) {
+      const provider = getProvider(target.channel.provider);
+      // Posted by hand: no job, just hand it to a person in "Ready to post"
+      if (provider.connectType === 'manual') {
+        await db.postTarget.update({ where: { id: target.id }, data: { status: 'READY', readyAt: new Date() } });
+        manual++;
+        continue;
+      }
+      // Channels with a pace limit get the next free slot; the job waits in the queue until then
+      const pace = provider.pace;
+      const slot = pace ? await reserveSlot(target.id, target.channelId, pace) : null;
+      if (slot && slot.getTime() > Date.now()) delayed++;
       await boss.send(PUBLISH_QUEUE, { targetId: target.id } satisfies PublishJob, {
         singletonKey: target.id,
         retryLimit: 3,
         retryDelay: 60,
         retryBackoff: true,
+        ...(slot ? { startAfter: slot } : {}),
       });
     }
-    log.info('dispatched post', { postId: id, channels: targets.length });
+    log.info('dispatched post', { postId: id, channels: targets.length, delayedByPace: delayed, readyToPostByHand: manual });
     if (targets.length === 0) await finalizePost(id);
   }
 }
@@ -75,7 +90,8 @@ export async function publishTarget(targetId: string, isLastAttempt: boolean) {
       })),
     );
 
-    const result = await provider.publish(creds, post.content, media);
+    if (!provider.publish) throw new Error(`${provider.name} channels can't publish posts`);
+    const result = await provider.publish(creds, post.content, media, (target.options ?? {}) as PostOptions);
     await db.postTarget.update({
       where: { id: target.id },
       data: {
@@ -108,7 +124,8 @@ export async function publishTarget(targetId: string, isLastAttempt: boolean) {
 /** Once every channel has finished, roll the outcome up to the post. */
 export async function finalizePost(postId: string) {
   const targets = await db.postTarget.findMany({ where: { postId }, select: { status: true } });
-  if (targets.some((t) => t.status === 'PENDING')) return;
+  // READY targets are waiting for a person to post them by hand
+  if (targets.some((t) => t.status === 'PENDING' || t.status === 'READY')) return;
 
   const published = targets.filter((t) => t.status === 'PUBLISHED').length;
   const status = published === targets.length ? 'PUBLISHED' : published === 0 ? 'FAILED' : 'PARTIAL';

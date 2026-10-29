@@ -3,6 +3,12 @@ const MARKS: Record<string, { label: string; className: string }> = {
   bluesky: { label: 'B', className: 'bg-sky-500' },
   x: { label: 'X', className: 'bg-slate-900' },
   linkedin: { label: 'in', className: 'bg-blue-700' },
+  mastodon: { label: 'M', className: 'bg-violet-600' },
+  reddit: { label: 'R', className: 'bg-orange-600' },
+  telegram: { label: 'T', className: 'bg-sky-600' },
+  discord: { label: 'D', className: 'bg-indigo-500' },
+  youtube: { label: 'Y', className: 'bg-red-600' },
+  'google-alerts': { label: 'G', className: 'bg-emerald-600' },
 };
 
 export function ProviderIcon({ provider, size = 16 }: { provider: string; size?: number }) {
