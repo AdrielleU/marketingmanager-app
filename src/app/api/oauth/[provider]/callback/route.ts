@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireOrg } from '@/lib/auth';
 import { saveConnectedAccount } from '@/lib/channels';
+import { createLogger } from '@/lib/logger';
 import { getProvider, isProviderId } from '@/lib/providers';
+
+const log = createLogger('oauth');
 
 function back(message?: string) {
   const url = new URL('/channels', process.env.APP_URL);
@@ -35,6 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ prov
     });
     await saveConnectedAccount(org.id, providerId, account);
   } catch (e) {
+    log.error('connect failed', { provider: providerId, orgId: org.id, error: e });
     return back(e instanceof Error ? e.message : 'Could not connect');
   }
 

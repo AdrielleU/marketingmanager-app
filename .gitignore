@@ -6,3 +6,6 @@ uploads
 *.tsbuildinfo
 next-env.d.ts
 .run
+data
+CLAUDE.local.md
+.claude/settings.local.json

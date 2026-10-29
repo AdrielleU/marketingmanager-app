@@ -1,4 +1,9 @@
-# Local Postgres for development. Host networking avoids rootless podman DNS issues.
+# Local Postgres for development. Works with Docker Compose and Podman.
+#
+# Data lives in ./data/postgres (a folder in this repo, git-ignored). Files there are owned by
+# the container's postgres user, so wipe it with `pnpm db:reset` rather than a plain rm.
+# Host networking avoids rootless-podman DNS issues; Postgres listens on localhost:5434.
+# ":Z" relabels the folder for SELinux (Fedora/RHEL/Alma); Docker on other systems ignores it.
 services:
   db:
     image: docker.io/library/postgres:17-alpine
@@ -11,7 +16,9 @@ services:
       POSTGRES_PASSWORD: mm-local-pwd
       POSTGRES_DB: mm
     volumes:
-      - mm-app-pg:/var/lib/postgresql/data
-
-volumes:
-  mm-app-pg:
+      - ./data/postgres:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mm -d mm -p 5434']
+      interval: 5s
+      timeout: 3s
+      retries: 10

@@ -52,13 +52,17 @@ Requirements: Node 22+, pnpm 10, Podman (or Docker) with compose.
 ```bash
 cp .env.example .env              # then set ENCRYPTION_KEY: openssl rand -hex 32
 pnpm install
-pnpm db:up                        # Postgres on localhost:5434
+pnpm db:up                        # Postgres on localhost:5434, data in ./data/postgres
 pnpm db:push                      # create tables
 pnpm dev                          # web app: http://localhost:3300
 pnpm worker                       # in a second terminal: publishes posts + refreshes stats
 ```
 
 Open http://localhost:3300, create an account and a workspace, then connect a channel.
+
+- **Database data** lives in `./data/postgres` (git-ignored). `pnpm db:reset` wipes it and recreates the schema.
+- **Logs:** the web app and worker print readable log lines. Set `LOG_FORMAT=json` for one JSON object per line (the default when `NODE_ENV=production`), and `LOG_LEVEL=debug|info|warn|error` to filter.
+- **Queue state** (pending, retrying and failed publish jobs) lives in the `pgboss` schema of the same database, so you can browse it with `pnpm db:studio` or psql.
 
 ## Connecting channels
 
@@ -109,6 +113,10 @@ src/app/api/              OAuth connect/callback routes, media upload
 - Video uploads, more channels (Mastodon, Threads, Instagram, Facebook, YouTube, TikTok)
 - Approval workflow, post templates, link shortening and UTM tagging
 - Login rate limiting and 2FA before exposing this to the internet
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md). [CLAUDE.md](CLAUDE.md) documents the architecture and conventions; it's written for AI coding agents, but it's the best quick tour for humans too.
 
 ## License
 

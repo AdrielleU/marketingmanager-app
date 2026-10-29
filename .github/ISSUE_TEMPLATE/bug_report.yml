@@ -1,0 +1,36 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Composer, Calendar, Publishing / worker, Channels, Analytics, Team / auth, Setup / install, Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant web or worker log lines. Remove tokens and personal data.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit

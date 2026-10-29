@@ -15,7 +15,7 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "db:reset": "podman compose -f compose.yaml down && podman unshare rm -rf data/postgres && mkdir -p data/postgres && podman compose -f compose.yaml up -d && sleep 3 && prisma db push"
   },
   "dependencies": {
     "@atproto/api": "0.15.27",
@@ -39,6 +39,11 @@
     "typescript": "5.8.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@prisma/client", "@prisma/engines", "prisma", "esbuild"]
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild"
+    ]
   }
 }

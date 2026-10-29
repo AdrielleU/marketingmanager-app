@@ -3,7 +3,10 @@ import { db } from './db';
 import { getFreshCredentials, markNeedsReconnect } from './channels';
 import { getProvider } from './providers';
 import { ReconnectRequiredError } from './providers/types';
+import { createLogger } from './logger';
 import { readUpload } from './storage';
+
+const log = createLogger('publishing');
 
 export const PUBLISH_QUEUE = 'publish-target';
 export const METRICS_QUEUE = 'refresh-metrics';
@@ -45,6 +48,7 @@ export async function dispatchDuePosts(boss: PgBoss) {
         retryBackoff: true,
       });
     }
+    log.info('dispatched post', { postId: id, channels: targets.length });
     if (targets.length === 0) await finalizePost(id);
   }
 }
@@ -82,15 +86,19 @@ export async function publishTarget(targetId: string, isLastAttempt: boolean) {
         publishedAt: new Date(),
       },
     });
+    log.info('published', { postId: post.id, targetId: target.id, provider: channel.provider, url: result.url });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     const reconnect = e instanceof ReconnectRequiredError;
+    const fields = { postId: post.id, targetId: target.id, provider: channel.provider, error: message };
     if (reconnect) await markNeedsReconnect(channel.id);
 
     if (!reconnect && !isLastAttempt) {
+      log.warn('publish failed, will retry', fields);
       await db.postTarget.update({ where: { id: target.id }, data: { error: `Retrying: ${message}` } });
       throw e;
     }
+    log.error(reconnect ? 'publish failed, channel needs reconnecting' : 'publish failed, giving up', fields);
     await db.postTarget.update({ where: { id: target.id }, data: { status: 'FAILED', error: message } });
   }
 
@@ -105,6 +113,7 @@ export async function finalizePost(postId: string) {
   const published = targets.filter((t) => t.status === 'PUBLISHED').length;
   const status = published === targets.length ? 'PUBLISHED' : published === 0 ? 'FAILED' : 'PARTIAL';
   await db.post.update({ where: { id: postId }, data: { status } });
+  log.info('post finished', { postId, status, published, channels: targets.length });
 }
 
 /** Pulls fresh like/repost/reply counts for posts published in the last 30 days (optionally one org). */
@@ -134,9 +143,10 @@ export async function refreshMetrics(orgId?: string) {
         .filter((t) => metrics[t.externalId!])
         .map((t) => ({ targetId: t.id, ...metrics[t.externalId!] }));
       if (rows.length) await db.metricSnapshot.createMany({ data: rows });
+      log.info('metrics refreshed', { provider: channel.provider, channelId: channel.id, posts: rows.length });
     } catch (e) {
       if (e instanceof ReconnectRequiredError) await markNeedsReconnect(channel.id);
-      console.error(`[metrics] ${channel.provider}/${channel.handle}:`, e instanceof Error ? e.message : e);
+      log.error('metrics refresh failed', { provider: channel.provider, channelId: channel.id, error: e });
     }
   }
 }

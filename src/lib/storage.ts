@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { randomToken } from './crypto';
+
+// Paths are built with plain strings on purpose: Turbopack traces path.join/path.resolve
+// calls with runtime values and then tries to scan the whole project (including the
+// unreadable ./data/postgres), which breaks `next build`.
 
 export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -12,13 +15,13 @@ export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // Bluesky's per-image limit is ~1MB, X is 5MB
 
 function root() {
-  return path.resolve(process.env.UPLOAD_DIR ?? './uploads');
+  return (process.env.UPLOAD_DIR || './uploads').replace(/\/+$/, '');
 }
 
 function orgDir(orgId: string) {
   // orgId is a cuid we generated, but guard anyway
   if (!/^[a-z0-9]+$/i.test(orgId)) throw new Error('Invalid org id');
-  return path.join(root(), orgId);
+  return `${root()}/${orgId}`;
 }
 
 export async function saveUpload(orgId: string, file: File) {
@@ -29,11 +32,11 @@ export async function saveUpload(orgId: string, file: File) {
   const fileName = `${randomToken(12)}.${ext}`;
   const dir = orgDir(orgId);
   await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, fileName), Buffer.from(await file.arrayBuffer()));
+  await writeFile(`${dir}/${fileName}`, Buffer.from(await file.arrayBuffer()));
   return { fileName, mimeType: file.type, size: file.size };
 }
 
 export async function readUpload(orgId: string, fileName: string) {
   if (!/^[A-Za-z0-9_-]+\.(jpg|png|gif|webp)$/.test(fileName)) throw new Error('Invalid file name');
-  return readFile(path.join(orgDir(orgId), fileName));
+  return readFile(`${orgDir(orgId)}/${fileName}`);
 }

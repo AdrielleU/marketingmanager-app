@@ -1,5 +1,6 @@
 import PgBoss from 'pg-boss';
 import { db } from '@/lib/db';
+import { createLogger } from '@/lib/logger';
 import {
   dispatchDuePosts,
   METRICS_QUEUE,
@@ -10,10 +11,11 @@ import {
 } from '@/lib/publishing';
 
 const DISPATCH_INTERVAL_MS = 10_000;
+const log = createLogger('worker');
 
 async function main() {
   const boss = new PgBoss({ connectionString: process.env.DATABASE_URL, max: 4 });
-  boss.on('error', (e) => console.error('[pg-boss]', e));
+  boss.on('error', (e) => log.error('pg-boss error', { error: e }));
   await boss.start();
 
   await boss.createQueue(PUBLISH_QUEUE);
@@ -34,15 +36,16 @@ async function main() {
     try {
       await dispatchDuePosts(boss);
     } catch (e) {
-      console.error('[dispatch]', e);
+      log.error('dispatch failed', { error: e });
     } finally {
       dispatching = false;
     }
   }, DISPATCH_INTERVAL_MS);
 
-  console.log('[worker] running: publishing due posts every 10s, metrics every 30 min');
+  log.info('running', { dispatchEverySeconds: DISPATCH_INTERVAL_MS / 1000, metricsCron: '*/30 * * * *' });
 
   const shutdown = async () => {
+    log.info('shutting down');
     clearInterval(timer);
     await boss.stop({ graceful: true, timeout: 10_000 });
     await db.$disconnect();
@@ -53,6 +56,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  log.error('worker crashed', { error: e });
   process.exit(1);
 });

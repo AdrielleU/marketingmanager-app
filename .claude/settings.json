@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install)",
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm build)",
+      "Bash(pnpm dev)",
+      "Bash(pnpm worker)",
+      "Bash(pnpm db:up)",
+      "Bash(pnpm db:down)",
+      "Bash(pnpm db:push)",
+      "Bash(pnpm exec prisma generate)",
+      "Bash(pnpm exec prisma validate)",
+      "Bash(pnpm exec prisma format)",
+      "Bash(pnpm exec tsc --noEmit)",
+      "Bash(podman compose -f compose.yaml up -d)",
+      "Bash(podman compose -f compose.yaml down)",
+      "Bash(podman ps:*)",
+      "Bash(podman logs:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
+    ],
+    "deny": [
+      "Bash(pnpm db:reset)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
+    ]
+  }
+}
