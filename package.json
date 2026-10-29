@@ -1,0 +1,44 @@
+{
+  "name": "marketingmanager-app",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@10.6.1",
+  "scripts": {
+    "dev": "next dev -p 3300",
+    "worker": "tsx watch --env-file=.env src/worker/index.ts",
+    "build": "next build",
+    "start": "next start -p 3300",
+    "worker:start": "tsx --env-file=.env src/worker/index.ts",
+    "db:up": "podman compose -f compose.yaml up -d",
+    "db:down": "podman compose -f compose.yaml down",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@atproto/api": "0.15.27",
+    "@prisma/client": "6.5.0",
+    "bcryptjs": "3.0.2",
+    "next": "16.4.2",
+    "pg-boss": "10.1.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.5.6",
+    "prisma": "6.5.0",
+    "tailwindcss": "3.4.17",
+    "tsx": "4.20.3",
+    "typescript": "5.8.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@prisma/client", "@prisma/engines", "prisma", "esbuild"]
+  }
+}

@@ -1,0 +1,174 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  sessions     Session[]
+  memberships  Membership[]
+  posts        Post[]
+}
+
+// Session tokens are random; only their SHA-256 hash is stored.
+model Session {
+  id        String   @id // sha256(token)
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  invites     Invite[]
+  channels    Channel[]
+  posts       Post[]
+  media       Media[]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Membership {
+  userId    String
+  orgId     String
+  role      Role         @default(MEMBER)
+  createdAt DateTime     @default(now())
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([userId, orgId])
+}
+
+model Invite {
+  id         String       @id @default(cuid())
+  orgId      String
+  email      String
+  role       Role         @default(MEMBER)
+  token      String       @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime     @default(now())
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+// A connected social account. Secrets are encrypted with ENCRYPTION_KEY.
+model Channel {
+  id             String       @id @default(cuid())
+  orgId          String
+  provider       String // "bluesky" | "x" | "linkedin"
+  externalId     String
+  name           String
+  handle         String
+  avatarUrl      String?
+  accessToken    String // encrypted
+  refreshToken   String? // encrypted
+  tokenExpiresAt DateTime?
+  needsReconnect Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targets        PostTarget[]
+
+  @@unique([orgId, provider, externalId])
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  PARTIAL // some channels failed
+  FAILED
+}
+
+model Post {
+  id          String       @id @default(cuid())
+  orgId       String
+  authorId    String
+  content     String
+  status      PostStatus   @default(DRAFT)
+  scheduledAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  author      User         @relation(fields: [authorId], references: [id])
+  targets     PostTarget[]
+  media       PostMedia[]
+
+  @@index([status, scheduledAt])
+  @@index([orgId, scheduledAt])
+}
+
+enum TargetStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+// One row per (post, channel) so each channel publishes and reports independently.
+model PostTarget {
+  id          String           @id @default(cuid())
+  postId      String
+  channelId   String
+  status      TargetStatus     @default(PENDING)
+  externalId  String?
+  externalUrl String?
+  error       String?
+  publishedAt DateTime?
+  post        Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  channel     Channel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  metrics     MetricSnapshot[]
+
+  @@unique([postId, channelId])
+}
+
+model Media {
+  id        String       @id @default(cuid())
+  orgId     String
+  fileName  String // stored file name inside UPLOAD_DIR/<orgId>/
+  mimeType  String
+  size      Int
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  posts     PostMedia[]
+}
+
+model PostMedia {
+  postId   String
+  mediaId  String
+  position Int
+  post     Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  media    Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([postId, mediaId])
+}
+
+model MetricSnapshot {
+  id          String     @id @default(cuid())
+  targetId    String
+  likes       Int        @default(0)
+  reposts     Int        @default(0)
+  replies     Int        @default(0)
+  impressions Int?
+  capturedAt  DateTime   @default(now())
+  target      PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, capturedAt])
+}

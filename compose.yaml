@@ -1,0 +1,17 @@
+# Local Postgres for development. Host networking avoids rootless podman DNS issues.
+services:
+  db:
+    image: docker.io/library/postgres:17-alpine
+    container_name: mm-app-postgres
+    restart: unless-stopped
+    network_mode: host
+    command: -p 5434
+    environment:
+      POSTGRES_USER: mm
+      POSTGRES_PASSWORD: mm-local-pwd
+      POSTGRES_DB: mm
+    volumes:
+      - mm-app-pg:/var/lib/postgresql/data
+
+volumes:
+  mm-app-pg:
